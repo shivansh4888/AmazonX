@@ -1,8 +1,11 @@
 'use client';
+import { useEffect, useState } from 'react';
 import { useCart } from '@/lib/cartContext';
+import { cartApi } from '@/lib/api';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Trash2, Plus, Minus, ShoppingBag, ArrowRight, Tag } from 'lucide-react';
+import ConflictWarnings from '@/components/cart/ConflictWarnings';
 
 function CartItemRow({ item, onUpdate, onRemove }) {
   const product = item.product;
@@ -83,12 +86,28 @@ function CartItemRow({ item, onUpdate, onRemove }) {
 }
 
 export default function CartPage() {
-  const { cart, updateQuantity, removeItem } = useCart();
+  const { cart, updateQuantity, removeItem, applyCoupon } = useCart();
   const router = useRouter();
+  const [warnings, setWarnings] = useState([]);
+  const [couponCode, setCouponCode] = useState('');
 
-  const tax = parseFloat((cart.subtotal * 0.18).toFixed(2));
-  const shipping = cart.subtotal >= 500 ? 0 : 49;
-  const total = cart.subtotal + tax + shipping;
+  useEffect(() => {
+    const fetchWarnings = async () => {
+      if (!cart.items.length) {
+        setWarnings([]);
+        return;
+      }
+
+      try {
+        const { data } = await cartApi.getConflicts();
+        setWarnings(data);
+      } catch (error) {
+        console.error('Failed to fetch cart conflicts:', error);
+      }
+    };
+
+    fetchWarnings();
+  }, [cart.items.length, cart.subtotal]);
 
   if (cart.items.length === 0) {
     return (
@@ -107,6 +126,7 @@ export default function CartPage() {
   return (
     <div className="max-w-7xl mx-auto px-4 py-6">
       <h1 className="text-2xl font-bold mb-6 text-amazon-dark">Shopping Cart</h1>
+      <ConflictWarnings warnings={warnings} />
 
       <div className="flex flex-col lg:flex-row gap-6">
         {/* ─── Cart Items ───────────────────────────────────────────────────── */}
@@ -143,7 +163,7 @@ export default function CartPage() {
         <div className="w-full lg:w-80 flex-shrink-0">
           <div className="bg-white rounded shadow-sm p-5 sticky top-28">
             {/* Free delivery notice */}
-            {shipping === 0 ? (
+            {cart.shipping === 0 ? (
               <div className="bg-green-50 border border-green-200 rounded p-2 mb-4 text-sm text-green-700">
                 ✓ Your order qualifies for <strong>FREE Delivery</strong>
               </div>
@@ -160,20 +180,26 @@ export default function CartPage() {
                 <span className="text-gray-600">Items ({cart.itemCount})</span>
                 <span>₹{cart.subtotal.toLocaleString('en-IN')}</span>
               </div>
+              {cart.discount > 0 && (
+                <div className="flex justify-between text-green-700">
+                  <span>Unlocked discount {cart.appliedCoupon ? `(${cart.appliedCoupon.code})` : ''}</span>
+                  <span>-₹{cart.discount.toLocaleString('en-IN')}</span>
+                </div>
+              )}
               <div className="flex justify-between">
                 <span className="text-gray-600">Tax (18% GST)</span>
-                <span>₹{tax.toLocaleString('en-IN')}</span>
+                <span>₹{cart.tax.toLocaleString('en-IN')}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-600">Delivery</span>
-                <span className={shipping === 0 ? 'text-amazon-green font-medium' : ''}>
-                  {shipping === 0 ? 'FREE' : `₹${shipping}`}
+                <span className={cart.shipping === 0 ? 'text-amazon-green font-medium' : ''}>
+                  {cart.shipping === 0 ? 'FREE' : `₹${cart.shipping}`}
                 </span>
               </div>
               <hr className="my-2" />
               <div className="flex justify-between font-bold text-lg">
                 <span>Order Total</span>
-                <span className="text-amazon-red">₹{total.toLocaleString('en-IN')}</span>
+                <span className="text-amazon-red">₹{cart.total.toLocaleString('en-IN')}</span>
               </div>
             </div>
 
@@ -181,10 +207,29 @@ export default function CartPage() {
             <div className="flex gap-2 mb-4">
               <div className="flex-1 flex items-center border border-gray-300 rounded px-2">
                 <Tag className="w-4 h-4 text-gray-400 mr-1" />
-                <input placeholder="Coupon code" className="text-sm flex-1 py-1.5 focus:outline-none" />
+                <input
+                  value={couponCode}
+                  onChange={(event) => setCouponCode(event.target.value.toUpperCase())}
+                  placeholder="Coupon code"
+                  className="text-sm flex-1 py-1.5 focus:outline-none"
+                />
               </div>
-              <button className="text-sm px-3 py-1.5 border border-gray-300 rounded hover:bg-gray-50">Apply</button>
+              <button
+                onClick={async () => {
+                  const success = await applyCoupon(couponCode);
+                  if (success) setCouponCode('');
+                }}
+                className="text-sm px-3 py-1.5 border border-gray-300 rounded hover:bg-gray-50"
+              >
+                Apply
+              </button>
             </div>
+
+            {cart.appliedCoupon && (
+              <p className="mb-4 rounded border border-green-200 bg-green-50 px-3 py-2 text-xs text-green-700">
+                Active coupon: <strong>{cart.appliedCoupon.code}</strong> for {cart.appliedCoupon.discountPercent}% off
+              </p>
+            )}
 
             <button
               onClick={() => router.push('/checkout')}

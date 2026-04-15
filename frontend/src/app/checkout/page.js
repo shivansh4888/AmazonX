@@ -273,11 +273,12 @@ function UPIPaymentForm({ total, onPaymentSuccess }) {
 
 // ─── Main Checkout Page ───────────────────────────────────────────────────────
 export default function CheckoutPage() {
-  const { cart, clearCart } = useCart();
+  const { cart } = useCart();
   const router = useRouter();
 
   const [step, setStep] = useState(1);
   const [processing, setProcessing] = useState(false);
+  const [placingOrder, setPlacingOrder] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState('CARD');
   const [cardData, setCardData] = useState({});
   const [upiVerified, setUpiVerified] = useState(false);
@@ -289,9 +290,9 @@ export default function CheckoutPage() {
 
   const [errors, setErrors] = useState({});
 
-  const tax = parseFloat((cart.subtotal * 0.18).toFixed(2));
-  const shipping = cart.subtotal >= 500 ? 0 : 49;
-  const total = parseFloat((cart.subtotal + tax + shipping).toFixed(2));
+  const tax = cart.tax;
+  const shipping = cart.shipping;
+  const total = cart.total;
 
   // Validate shipping form
   const validateAddress = () => {
@@ -328,6 +329,7 @@ export default function CheckoutPage() {
     if (paymentMethod === 'CARD' && !validateCard()) return;
 
     setProcessing(true);
+    setPlacingOrder(true);
 
     try {
       const orderData = {
@@ -353,16 +355,16 @@ export default function CheckoutPage() {
         console.log('📧 Email preview:', data.emailPreview);
       }
 
-      await clearCart();
-      router.push(`/orders/${data.order.id}?new=true`);
+      router.replace(`/orders/${data.order.id}?new=true`);
     } catch (error) {
       const msg = error.response?.data?.error || 'Order placement failed. Please try again.';
       toast.error(msg);
       setProcessing(false);
+      setPlacingOrder(false);
     }
   };
 
-  if (cart.items.length === 0 && !processing) {
+  if (cart.items.length === 0 && !processing && !placingOrder) {
     return (
       <div className="max-w-lg mx-auto px-4 py-16 text-center">
         <p className="text-xl font-semibold mb-4">Your cart is empty</p>
@@ -627,11 +629,11 @@ export default function CheckoutPage() {
                 </button>
                 <button
                   onClick={handlePlaceOrder}
-                  disabled={processing}
+                  disabled={processing || placingOrder}
                   className="btn-primary flex-1 py-3 text-base font-bold flex items-center justify-center gap-2 disabled:opacity-70"
                 >
-                  {processing ? (
-                    <><Loader2 className="w-5 h-5 animate-spin" /> Processing Payment...</>
+                  {processing || placingOrder ? (
+                    <><Loader2 className="w-5 h-5 animate-spin" /> {placingOrder ? 'Opening confirmation...' : 'Processing Payment...'}</>
                   ) : (
                     <><Lock className="w-4 h-4" /> Place Order · ₹{total.toLocaleString('en-IN')}</>
                   )}

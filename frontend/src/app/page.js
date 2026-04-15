@@ -1,8 +1,9 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { productsApi } from '@/lib/api';
+import { productsApi, reorderApi } from '@/lib/api';
 import ProductCard from '@/components/product/ProductCard';
+import ReorderSoonSection from '@/components/home/ReorderSoonSection';
 import { SlidersHorizontal, X } from 'lucide-react';
 
 function ProductSkeleton() {
@@ -86,6 +87,7 @@ export default function HomePage() {
   const [pagination, setPagination] = useState({});
   const [loading, setLoading] = useState(true);
   const [showFilters, setShowFilters] = useState(false);
+  const [reorderSuggestions, setReorderSuggestions] = useState([]);
 
   // Filter state synced with URL params
   const search = searchParams.get('search') || '';
@@ -118,6 +120,19 @@ export default function HomePage() {
 
   useEffect(() => { fetchProducts(); }, [fetchProducts]);
 
+  useEffect(() => {
+    const fetchReorderSuggestions = async () => {
+      try {
+        const { data } = await reorderApi.getSuggestions();
+        setReorderSuggestions(data);
+      } catch (error) {
+        console.error('Failed to fetch reorder suggestions:', error);
+      }
+    };
+
+    fetchReorderSuggestions();
+  }, []);
+
   const sortOptions = [
     { value: 'createdAt', label: 'Newest First' },
     { value: 'price_asc', label: 'Price: Low to High' },
@@ -128,6 +143,7 @@ export default function HomePage() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6">
+      <ReorderSoonSection suggestions={reorderSuggestions} />
       {/* Hero Banner */}
       {!search && !category && (
   <>

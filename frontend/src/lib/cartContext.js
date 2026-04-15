@@ -9,7 +9,16 @@ import toast from 'react-hot-toast';
 const CartContext = createContext(null);
 
 export function CartProvider({ children }) {
-  const [cart, setCart] = useState({ items: [], subtotal: 0, itemCount: 0 });
+  const [cart, setCart] = useState({
+    items: [],
+    subtotal: 0,
+    discount: 0,
+    tax: 0,
+    shipping: 0,
+    total: 0,
+    itemCount: 0,
+    appliedCoupon: null,
+  });
   const [loading, setLoading] = useState(false);
 
   // Initialize session and fetch cart on mount
@@ -17,6 +26,22 @@ export function CartProvider({ children }) {
     getSessionId(); // Ensure session exists
     fetchCart();
   }, []);
+
+  useEffect(() => {
+    const pendingCoupon = typeof window !== 'undefined'
+      ? localStorage.getItem('shopx_pending_coupon')
+      : null;
+
+    if (!pendingCoupon || cart.items.length === 0 || cart.appliedCoupon?.code === pendingCoupon) {
+      return;
+    }
+
+    applyCoupon(pendingCoupon, { silent: true }).then((success) => {
+      if (success && typeof window !== 'undefined') {
+        localStorage.removeItem('shopx_pending_coupon');
+      }
+    });
+  }, [cart.items.length, cart.appliedCoupon?.code]);
 
   const fetchCart = useCallback(async () => {
     try {
@@ -55,22 +80,22 @@ export function CartProvider({ children }) {
 
   const updateQuantity = useCallback(async (itemId, quantity) => {
     try {
-      await cartApi.update(itemId, quantity);
-      await fetchCart(); // Refresh cart
+      const { data } = await cartApi.update(itemId, quantity);
+      setCart(data.cart);
     } catch (error) {
       toast.error(error.response?.data?.error || 'Failed to update cart');
     }
-  }, [fetchCart]);
+  }, []);
 
   const removeItem = useCallback(async (itemId) => {
     try {
-      await cartApi.remove(itemId);
-      await fetchCart();
+      const { data } = await cartApi.remove(itemId);
+      setCart(data.cart);
       toast.success('Item removed', { icon: '🗑️' });
     } catch (error) {
       toast.error('Failed to remove item');
     }
-  }, [fetchCart]);
+  }, []);
 
   const clearCart = useCallback(async () => {
     try {
@@ -78,6 +103,24 @@ export function CartProvider({ children }) {
       setCart({ items: [], subtotal: 0, itemCount: 0 });
     } catch (error) {
       console.error('Clear cart error:', error);
+    }
+  }, []);
+
+  const applyCoupon = useCallback(async (code, options = {}) => {
+    if (!code) return false;
+
+    try {
+      const { data } = await cartApi.applyCoupon(code);
+      setCart(data.cart);
+      if (!options.silent) {
+        toast.success(data.message || 'Coupon applied');
+      }
+      return true;
+    } catch (error) {
+      if (!options.silent) {
+        toast.error(error.response?.data?.error || 'Failed to apply coupon');
+      }
+      return false;
     }
   }, []);
 
@@ -89,7 +132,8 @@ export function CartProvider({ children }) {
       updateQuantity, 
       removeItem, 
       clearCart,
-      fetchCart 
+      fetchCart,
+      applyCoupon,
     }}>
       {children}
     </CartContext.Provider>

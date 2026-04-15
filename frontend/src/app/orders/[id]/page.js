@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useSearchParams, useRouter } from 'next/navigation';
 import { ordersApi } from '@/lib/api';
+import { useCart } from '@/lib/cartContext';
 import {
   CheckCircle, Package, Truck, MapPin,
   CreditCard, Smartphone, Banknote,
@@ -42,6 +43,7 @@ export default function OrderConfirmationPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const isNew = searchParams.get('new') === 'true';
+  const { fetchCart } = useCart();
 
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -60,6 +62,11 @@ export default function OrderConfirmationPage() {
     };
     fetchOrder();
   }, [id]);
+
+  useEffect(() => {
+    if (!isNew) return;
+    fetchCart();
+  }, [fetchCart, isNew]);
 
   const copyOrderId = () => {
     navigator.clipboard.writeText(order.id);

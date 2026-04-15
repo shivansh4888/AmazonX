@@ -1,13 +1,15 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { productsApi } from '@/lib/api';
+import { challengesApi, productsApi } from '@/lib/api';
 import { useCart } from '@/lib/cartContext';
-import { Star, ShoppingCart, Zap, Check, Shield, Truck, RotateCcw } from 'lucide-react';
+import { Star, ShoppingCart, Zap, Check, Shield, Truck, RotateCcw, BrainCircuit, BadgePercent } from 'lucide-react';
 
 import ImageZoom from '@/components/product/ImageZoom';
 import AlsoBought from '@/components/product/AlsoBought';
 import ReviewSection from '@/components/product/ReviewSection';
+import PriceInsightModal from '@/components/product/PriceInsightModal';
+import ChallengeModal from '@/components/product/ChallengeModal';
 
 function StarRating({ rating, count }) {
   return (
@@ -26,13 +28,19 @@ function StarRating({ rating, count }) {
 export default function ProductDetailPage() {
   const { id } = useParams();
   const router = useRouter();
-  const { addToCart, loading } = useCart();
+  const { addToCart, applyCoupon, loading } = useCart();
 
   const [product, setProduct] = useState(null);
   const [fetching, setFetching] = useState(true);
   const [activeImage, setActiveImage] = useState(0);
   const [quantity, setQuantity] = useState(1);
   const [addedToCart, setAddedToCart] = useState(false);
+  const [priceInsightOpen, setPriceInsightOpen] = useState(false);
+  const [priceInsightLoading, setPriceInsightLoading] = useState(false);
+  const [priceInsight, setPriceInsight] = useState(null);
+  const [challengeOpen, setChallengeOpen] = useState(false);
+  const [challengeLoading, setChallengeLoading] = useState(false);
+  const [challenge, setChallenge] = useState(null);
 
   useEffect(() => {
     const fetchProduct = async () => {
@@ -59,6 +67,60 @@ export default function ProductDetailPage() {
   const handleBuyNow = async () => {
     await addToCart(product.id, quantity, product.name);
     router.push('/checkout');
+  };
+
+  const handleOpenPriceInsight = async () => {
+    setPriceInsightOpen(true);
+    setPriceInsightLoading(true);
+    try {
+      const { data } = await productsApi.getPriceInsight(id);
+      setPriceInsight(data);
+    } catch (error) {
+      console.error('Failed to fetch price insight:', error);
+      setPriceInsight(null);
+    } finally {
+      setPriceInsightLoading(false);
+    }
+  };
+
+  const handleOpenChallenge = async () => {
+    setChallengeOpen(true);
+    setChallengeLoading(true);
+    try {
+      const { data } = await challengesApi.getByProductId(id);
+      setChallenge(data);
+    } catch (error) {
+      console.error('Failed to fetch challenge:', error);
+      setChallenge(null);
+    } finally {
+      setChallengeLoading(false);
+    }
+  };
+
+  const handleChallengeSubmit = async (answer) => {
+    try {
+      const { data } = await challengesApi.attempt({
+        challengeId: challenge.id,
+        answer,
+      });
+
+      if (!data.success || !data.coupon) {
+        return false;
+      }
+
+      await addToCart(product.id, 1, product.name);
+      const applied = await applyCoupon(data.coupon.code);
+
+      if (!applied && typeof window !== 'undefined') {
+        localStorage.setItem('shopx_pending_coupon', data.coupon.code);
+      }
+
+      setChallengeOpen(false);
+      return true;
+    } catch (error) {
+      console.error('Challenge attempt failed:', error);
+      return false;
+    }
   };
 
   if (fetching) {
@@ -136,6 +198,22 @@ export default function ProductDetailPage() {
               <span className="text-3xl font-bold">₹{product.price.toLocaleString('en-IN')}</span>
               <span className="text-gray-500 line-through text-lg">₹{originalPrice.toLocaleString('en-IN')}</span>
               <span className="text-amazon-red font-semibold">({discount}% off)</span>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-3">
+              <button
+                onClick={handleOpenPriceInsight}
+                className="inline-flex items-center gap-2 rounded-full border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-400 hover:bg-slate-50"
+              >
+                <BrainCircuit className="h-4 w-4" />
+                View Price Insight
+              </button>
+              <button
+                onClick={handleOpenChallenge}
+                className="inline-flex items-center gap-2 rounded-full border border-indigo-300 bg-indigo-50 px-4 py-2 text-sm font-medium text-indigo-700 transition hover:bg-indigo-100"
+              >
+                <BadgePercent className="h-4 w-4" />
+                Unlock Discount
+              </button>
             </div>
 
             {product.stock <= 10 && product.stock > 0 && (
@@ -263,6 +341,19 @@ export default function ProductDetailPage() {
 
       <AlsoBought product={product} />
       <ReviewSection product={product} />
+      <PriceInsightModal
+        open={priceInsightOpen}
+        insight={priceInsight}
+        loading={priceInsightLoading}
+        onClose={() => setPriceInsightOpen(false)}
+      />
+      <ChallengeModal
+        open={challengeOpen}
+        challenge={challenge}
+        loading={challengeLoading}
+        onClose={() => setChallengeOpen(false)}
+        onSubmit={handleChallengeSubmit}
+      />
 
     </div>
   );

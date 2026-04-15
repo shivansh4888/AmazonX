@@ -14,8 +14,12 @@ export const api = axios.create({
 api.interceptors.request.use((config) => {
   if (typeof window !== 'undefined') {
     const sessionId = getSessionId();
+    const userId = getUserId();
     if (sessionId) {
       config.headers['x-session-id'] = sessionId;
+    }
+    if (userId) {
+      config.headers['x-user-id'] = userId;
     }
   }
   return config;
@@ -34,6 +38,17 @@ export const getSessionId = () => {
     localStorage.setItem('shopx_session_id', sessionId);
   }
   return sessionId;
+};
+
+export const getUserId = () => {
+  if (typeof window === 'undefined') return null;
+
+  let userId = localStorage.getItem('shopx_user_id');
+  if (!userId) {
+    userId = 'demo-user';
+    localStorage.setItem('shopx_user_id', userId);
+  }
+  return userId;
 };
 
 // ─── API Functions ─────────────────────────────────────────────────────────────
@@ -59,18 +74,30 @@ export const productsApi = {
     return api.get('/products', { params: normalizedParams });
   },
   getById: (id) => api.get(`/products/${id}`),
+  getPriceInsight: (id) => api.get(`/products/${id}/price-insight`),
 };
 
 export const cartApi = {
   get: () => api.get('/cart'),
+  getConflicts: () => api.get('/cart/conflicts'),
   add: (productId, quantity = 1) => api.post('/cart', { productId, quantity }),
   update: (itemId, quantity) => api.put(`/cart/${itemId}`, { quantity }),
   remove: (itemId) => api.delete(`/cart/${itemId}`),
   clear: () => api.delete('/cart/clear'),
+  applyCoupon: (code) => api.post('/cart/apply-coupon', { code }),
 };
 
 export const ordersApi = {
   create: (orderData) => api.post('/orders', orderData),
   getById: (id) => api.get(`/orders/${id}`),
   getByEmail: (email) => api.get('/orders', { params: { email } }),
+};
+
+export const reorderApi = {
+  getSuggestions: () => api.get('/reorder/suggestions'),
+};
+
+export const challengesApi = {
+  getByProductId: (productId) => api.get(`/challenges/${productId}`),
+  attempt: (payload) => api.post('/challenges/attempt', payload),
 };
