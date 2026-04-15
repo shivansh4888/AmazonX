@@ -340,6 +340,5 @@ NEXT_PUBLIC_API_URL=https://your-backend.onrender.com/api
 
 ---
 
-## 📄 License
-
-MIT — Free to use for learning, interviews, and personal projects.
+## 📄Author
+Shivansh Narayan singh
