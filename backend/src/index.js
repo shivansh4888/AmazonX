@@ -8,6 +8,8 @@ const cors = require('cors');
 const productRoutes = require('./routes/products');
 const cartRoutes = require('./routes/cart');
 const orderRoutes = require('./routes/orders');
+const reorderRoutes = require('./routes/reorder');
+const challengeRoutes = require('./routes/challenges');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -36,6 +38,8 @@ app.use('/api/products', productRoutes);
 app.use('/api/cart', cartRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/reviews', reviewRoutes);
+app.use('/api/reorder', reorderRoutes);
+app.use('/api/challenges', challengeRoutes);
 
 // Health check
 app.get('/health', (req, res) => {

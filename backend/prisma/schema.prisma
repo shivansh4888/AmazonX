@@ -11,32 +11,39 @@ datasource db {
 }
 
 model Product {
-  id          String      @id @default(uuid())
-  name        String
-  description String
-  price       Float
-  stock       Int         @default(0)
-  category    String
-  images      String[]    // Array of image URLs
-  specs       Json?       // Key-value specs object
-  rating      Float       @default(4.0)
-  reviewCount Int         @default(0)
-  brand       String?
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
-  cartItems   CartItem[]
-  orderItems  OrderItem[]
-  reviews     Review[]
+  id                 String                     @id @default(uuid())
+  name               String
+  description        String
+  price              Float
+  stock              Int                        @default(0)
+  category           String
+  images             String[]                   // Array of image URLs
+  specs              Json?                      // Key-value specs object
+  rating             Float                      @default(4.0)
+  reviewCount        Int                        @default(0)
+  brand              String?
+  createdAt          DateTime                   @default(now())
+  updatedAt          DateTime                   @updatedAt
+  cartItems          CartItem[]
+  orderItems         OrderItem[]
+  reviews            Review[]
+  priceHistory       PriceHistory[]
+  compatibilityRules ProductCompatibilityRule[]
+  purchaseHistory    PurchaseHistory[]
+  challenges         Challenge[]
+  coupons            Coupon[]
   @@index([category])
   @@index([name])
 }
 
 model Cart {
-  id        String     @id @default(uuid())
-  sessionId String     @unique // Browser session ID (no auth required)
-  items     CartItem[]
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  id                String   @id @default(uuid())
+  sessionId         String   @unique // Browser session ID (no auth required)
+  items             CartItem[]
+  appliedCouponCode String?
+  appliedCoupon     Coupon?  @relation("AppliedCouponCarts", fields: [appliedCouponCode], references: [code])
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 }
 
 model CartItem {
@@ -53,23 +60,25 @@ model CartItem {
 }
 
 model Order {
-  id              String      @id @default(uuid())
-  status          OrderStatus @default(CONFIRMED)
-  paymentMethod   PaymentMethod
-  paymentStatus   PaymentStatus @default(PAID)
-  subtotal        Float
-  tax             Float
-  shippingCost    Float       @default(0)
-  total           Float
+  id                String        @id @default(uuid())
+  status            OrderStatus   @default(CONFIRMED)
+  paymentMethod     PaymentMethod
+  paymentStatus     PaymentStatus @default(PAID)
+  subtotal          Float
+  discount          Float         @default(0)
+  tax               Float
+  shippingCost      Float         @default(0)
+  total             Float
+  couponCode        String?
   // Shipping address stored as JSON
-  shippingAddress Json
+  shippingAddress   Json
   // Customer email for notifications
-  customerEmail   String
-  customerName    String
+  customerEmail     String
+  customerName      String
   estimatedDelivery DateTime
-  items           OrderItem[]
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
+  items             OrderItem[]
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
 
   @@index([customerEmail])
   @@index([status])
@@ -103,6 +112,87 @@ model Review {
   @@index([productId])
 }
 
+model ProductCompatibilityRule {
+  id                      String   @id @default(uuid())
+  category                String
+  requires                String[]
+  minCompatiblePriceRatio Float?
+  warningMessage          String
+  severity                String   @default("medium")
+  product                 Product? @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productId               String?
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  @@index([category])
+  @@index([productId])
+}
+
+model PriceHistory {
+  id         String   @id @default(uuid())
+  product     Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productId   String
+  price       Float
+  timestamp   DateTime @default(now())
+
+  @@index([productId, timestamp])
+}
+
+model PurchaseHistory {
+  id         String   @id @default(uuid())
+  userId     String
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productId  String
+  quantity   Int
+  timestamp  DateTime @default(now())
+
+  @@index([userId, productId, timestamp])
+}
+
+model Challenge {
+  id              String             @id @default(uuid())
+  product         Product            @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productId       String
+  type            ChallengeType
+  prompt          String
+  answer          String
+  discountPercent Float
+  attempts        ChallengeAttempt[]
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  @@index([productId])
+}
+
+model ChallengeAttempt {
+  id         String    @id @default(uuid())
+  challenge   Challenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  challengeId String
+  userId      String
+  answer      String
+  isCorrect   Boolean
+  couponCode  String?
+  createdAt   DateTime  @default(now())
+
+  @@index([challengeId, userId])
+}
+
+model Coupon {
+  id              String   @id @default(uuid())
+  code            String   @unique
+  userId          String
+  product         Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  productId       String?
+  discountPercent Float
+  expiresAt       DateTime
+  redeemedAt      DateTime?
+  createdAt       DateTime @default(now())
+  carts           Cart[]   @relation("AppliedCouponCarts")
+
+  @@index([userId, expiresAt])
+  @@index([productId])
+}
+
 enum OrderStatus {
   CONFIRMED
   PROCESSING
@@ -122,4 +212,9 @@ enum PaymentStatus {
   PAID
   FAILED
   REFUNDED
+}
+
+enum ChallengeType {
+  QUIZ
+  PUZZLE
 }

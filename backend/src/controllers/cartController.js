@@ -1,91 +1,104 @@
-// Cart Controller
-// Manages shopping cart operations using session-based cart (no auth required)
-// Each browser session gets its own cart via a sessionId stored in client
-
-const { PrismaClient } = require('@prisma/client');
 const { v4: uuidv4 } = require('uuid');
-const prisma = new PrismaClient();
+const prisma = require('../lib/prisma');
+const { computeCartTotals, couponIsActive } = require('../services/cartPricingService');
+const { getCartConflicts } = require('../services/cartAnalysisService');
+const { getUserId } = require('../utils/requestContext');
 
-/**
- * Helper: Get or create cart for a session
- */
+const cartInclude = {
+  appliedCoupon: true,
+  items: {
+    include: {
+      product: {
+        select: {
+          id: true,
+          name: true,
+          price: true,
+          stock: true,
+          images: true,
+          category: true,
+          brand: true,
+        },
+      },
+    },
+  },
+};
+
+const sanitizeAppliedCoupon = async (cart, userId) => {
+  if (!cart?.appliedCouponCode) return cart;
+
+  const coupon = cart.appliedCoupon;
+  const eligible = couponIsActive(coupon) &&
+    (!coupon.userId || coupon.userId === userId) &&
+    cart.items.some((item) => !coupon.productId || coupon.productId === item.product.id);
+
+  if (eligible) return cart;
+
+  await prisma.cart.update({
+    where: { id: cart.id },
+    data: { appliedCouponCode: null },
+  });
+
+  return prisma.cart.findUnique({
+    where: { id: cart.id },
+    include: cartInclude,
+  });
+};
+
+const serializeCart = async (cart, userId) => {
+  const normalizedCart = await sanitizeAppliedCoupon(cart, userId);
+  const totals = computeCartTotals(normalizedCart);
+
+  return {
+    id: normalizedCart.id,
+    items: normalizedCart.items.map((item) => ({
+      id: item.id,
+      quantity: item.quantity,
+      product: item.product,
+    })),
+    ...totals,
+  };
+};
+
 const getOrCreateCart = async (sessionId) => {
   let cart = await prisma.cart.findUnique({
     where: { sessionId },
-    include: {
-      items: {
-        include: {
-          product: {
-            select: {
-              id: true,
-              name: true,
-              price: true,
-              stock: true,
-              images: true,
-              category: true
-            }
-          }
-        }
-      }
-    }
+    include: cartInclude,
   });
 
   if (!cart) {
     cart = await prisma.cart.create({
       data: { sessionId },
-      include: {
-        items: {
-          include: { product: true }
-        }
-      }
+      include: cartInclude,
     });
   }
 
   return cart;
 };
 
-/**
- * GET /api/cart
- * Returns the current cart with items and totals
- */
 const getCart = async (req, res) => {
   try {
-    // sessionId comes from header (set by frontend on first load)
     const sessionId = req.headers['x-session-id'];
-    
     if (!sessionId) {
-      return res.json({ items: [], subtotal: 0, itemCount: 0 });
+      return res.json({
+        items: [],
+        subtotal: 0,
+        discount: 0,
+        tax: 0,
+        shipping: 0,
+        total: 0,
+        itemCount: 0,
+        appliedCoupon: null,
+      });
     }
 
     const cart = await getOrCreateCart(sessionId);
-
-    // Calculate subtotal
-    const subtotal = cart.items.reduce((sum, item) => {
-      return sum + (item.product.price * item.quantity);
-    }, 0);
-
-    const itemCount = cart.items.reduce((sum, item) => sum + item.quantity, 0);
-
-    res.json({
-      id: cart.id,
-      items: cart.items.map(item => ({
-        id: item.id,
-        quantity: item.quantity,
-        product: item.product
-      })),
-      subtotal,
-      itemCount
-    });
+    res.json(await serializeCart(cart, getUserId(req)));
   } catch (error) {
     console.error('getCart error:', error);
     res.status(500).json({ error: 'Failed to fetch cart' });
   }
 };
 
-/**
- * POST /api/cart
- * Add item to cart or increment quantity if already exists
- */
 const addToCart = async (req, res) => {
   try {
     const sessionId = req.headers['x-session-id'] || uuidv4();
@@ -95,10 +108,9 @@ const addToCart = async (req, res) => {
       return res.status(400).json({ error: 'productId is required' });
     }
 
-    // Validate product exists and has stock
     const product = await prisma.product.findUnique({
       where: { id: productId },
-      select: { id: true, stock: true, name: true }
+      select: { id: true, stock: true, name: true },
     });
 
     if (!product) {
@@ -110,57 +122,39 @@ const addToCart = async (req, res) => {
     }
 
     const cart = await getOrCreateCart(sessionId);
+    const existingItem = cart.items.find((item) => item.product.id === productId);
 
-    // Check if item already in cart
-    const existingItem = cart.items.find(i => i.product.id === productId);
-    
     if (existingItem) {
-      // Validate stock for total quantity
-      const newQty = existingItem.quantity + quantity;
-      if (newQty > product.stock) {
-        return res.status(400).json({ 
-          error: `Only ${product.stock} units available` 
-        });
+      const newQuantity = existingItem.quantity + quantity;
+      if (newQuantity > product.stock) {
+        return res.status(400).json({ error: `Only ${product.stock} units available` });
       }
 
-      // Update quantity
       await prisma.cartItem.update({
         where: { id: existingItem.id },
-        data: { quantity: newQty }
+        data: { quantity: newQuantity },
       });
     } else {
-      // Add new item
       if (quantity > product.stock) {
-        return res.status(400).json({ 
-          error: `Only ${product.stock} units available` 
-        });
+        return res.status(400).json({ error: `Only ${product.stock} units available` });
       }
 
       await prisma.cartItem.create({
         data: {
           cartId: cart.id,
           productId,
-          quantity
-        }
+          quantity,
+        },
       });
     }
 
-    // Return updated cart
     const updatedCart = await getOrCreateCart(sessionId);
-    const subtotal = updatedCart.items.reduce((sum, item) => 
-      sum + (item.product.price * item.quantity), 0
-    );
 
     res.json({
       success: true,
       message: `${product.name} added to cart`,
-      sessionId, // Return sessionId so frontend can store it
-      cart: {
-        id: updatedCart.id,
-        items: updatedCart.items,
-        subtotal,
-        itemCount: updatedCart.items.reduce((s, i) => s + i.quantity, 0)
-      }
+      sessionId,
+      cart: await serializeCart(updatedCart, getUserId(req)),
     });
   } catch (error) {
     console.error('addToCart error:', error);
@@ -168,10 +162,6 @@ const addToCart = async (req, res) => {
   }
 };
 
-/**
- * PUT /api/cart/:itemId
- * Update cart item quantity
- */
 const updateCartItem = async (req, res) => {
   try {
     const { itemId } = req.params;
@@ -182,47 +172,47 @@ const updateCartItem = async (req, res) => {
       return res.status(400).json({ error: 'Quantity must be at least 1' });
     }
 
-    // Get cart item with product info
     const cartItem = await prisma.cartItem.findUnique({
       where: { id: itemId },
       include: {
-        product: { select: { stock: true, name: true } },
-        cart: { select: { sessionId: true } }
-      }
+        product: { select: { stock: true } },
+        cart: { select: { id: true, sessionId: true } },
+      },
     });
 
     if (!cartItem) {
       return res.status(404).json({ error: 'Cart item not found' });
     }
 
-    // Security: ensure this item belongs to the requester's cart
     if (cartItem.cart.sessionId !== sessionId) {
       return res.status(403).json({ error: 'Unauthorized' });
     }
 
-    // Check stock availability
     if (quantity > cartItem.product.stock) {
-      return res.status(400).json({ 
-        error: `Only ${cartItem.product.stock} units available` 
-      });
+      return res.status(400).json({ error: `Only ${cartItem.product.stock} units available` });
     }
 
     await prisma.cartItem.update({
       where: { id: itemId },
-      data: { quantity }
+      data: { quantity },
     });
 
-    res.json({ success: true, message: 'Cart updated' });
+    const cart = await prisma.cart.findUnique({
+      where: { id: cartItem.cart.id },
+      include: cartInclude,
+    });
+
+    res.json({
+      success: true,
+      message: 'Cart updated',
+      cart: await serializeCart(cart, getUserId(req)),
+    });
   } catch (error) {
     console.error('updateCartItem error:', error);
     res.status(500).json({ error: 'Failed to update cart' });
   }
 };
 
-/**
- * DELETE /api/cart/:itemId
- * Remove item from cart
- */
 const removeFromCart = async (req, res) => {
   try {
     const { itemId } = req.params;
@@ -230,7 +220,7 @@ const removeFromCart = async (req, res) => {
 
     const cartItem = await prisma.cartItem.findUnique({
       where: { id: itemId },
-      include: { cart: { select: { sessionId: true } } }
+      include: { cart: { select: { id: true, sessionId: true } } },
     });
 
     if (!cartItem) {
@@ -243,24 +233,33 @@ const removeFromCart = async (req, res) => {
 
     await prisma.cartItem.delete({ where: { id: itemId } });
 
-    res.json({ success: true, message: 'Item removed from cart' });
+    const cart = await prisma.cart.findUnique({
+      where: { id: cartItem.cart.id },
+      include: cartInclude,
+    });
+
+    res.json({
+      success: true,
+      message: 'Item removed from cart',
+      cart: await serializeCart(cart, getUserId(req)),
+    });
   } catch (error) {
     console.error('removeFromCart error:', error);
     res.status(500).json({ error: 'Failed to remove item' });
   }
 };
 
-/**
- * DELETE /api/cart
- * Clear entire cart (called after successful order)
- */
 const clearCart = async (req, res) => {
   try {
     const sessionId = req.headers['x-session-id'];
-    
     const cart = await prisma.cart.findUnique({ where: { sessionId } });
+
     if (cart) {
       await prisma.cartItem.deleteMany({ where: { cartId: cart.id } });
+      await prisma.cart.update({
+        where: { id: cart.id },
+        data: { appliedCouponCode: null },
+      });
     }
 
     res.json({ success: true });
@@ -270,4 +269,73 @@ const clearCart = async (req, res) => {
   }
 };
 
-module.exports = { getCart, addToCart, updateCartItem, removeFromCart, clearCart };
+const getConflicts = async (req, res) => {
+  try {
+    const sessionId = req.headers['x-session-id'];
+    if (!sessionId) return res.json([]);
+
+    const cart = await getOrCreateCart(sessionId);
+    const warnings = await getCartConflicts(cart.items);
+    res.json(warnings);
+  } catch (error) {
+    console.error('getConflicts error:', error);
+    res.status(500).json({ error: 'Failed to analyze cart' });
+  }
+};
+
+const applyCoupon = async (req, res) => {
+  try {
+    const sessionId = req.headers['x-session-id'];
+    const userId = getUserId(req);
+    const { code } = req.body;
+
+    if (!sessionId) {
+      return res.status(400).json({ error: 'No active cart session found' });
+    }
+
+    if (!code) {
+      return res.status(400).json({ error: 'Coupon code is required' });
+    }
+
+    const cart = await getOrCreateCart(sessionId);
+    const coupon = await prisma.coupon.findUnique({ where: { code } });
+
+    if (!coupon || !couponIsActive(coupon)) {
+      return res.status(400).json({ error: 'Coupon is invalid or expired' });
+    }
+
+    if (coupon.userId !== userId) {
+      return res.status(403).json({ error: 'This coupon belongs to a different shopper' });
+    }
+
+    const eligible = cart.items.some((item) => !coupon.productId || coupon.productId === item.product.id);
+    if (!eligible) {
+      return res.status(400).json({ error: 'Add the eligible product to your cart before applying this coupon' });
+    }
+
+    const updatedCart = await prisma.cart.update({
+      where: { id: cart.id },
+      data: { appliedCouponCode: coupon.code },
+      include: cartInclude,
+    });
+
+    res.json({
+      success: true,
+      message: `${coupon.discountPercent}% discount applied`,
+      cart: await serializeCart(updatedCart, userId),
+    });
+  } catch (error) {
+    console.error('applyCoupon error:', error);
+    res.status(500).json({ error: 'Failed to apply coupon' });
+  }
+};
+
+module.exports = {
+  getCart,
+  addToCart,
+  updateCartItem,
+  removeFromCart,
+  clearCart,
+  getConflicts,
+  applyCoupon,
+};

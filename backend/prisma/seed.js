@@ -376,6 +376,38 @@ const products = [
   rating: 4.5, reviewCount: 15234,
   images: ["https://images.unsplash.com/photo-1556679343-c7306c1976bc?w=600"],
   specs: { "Count": "25 tea bags", "Type": "Green Tea + Tulsi", "Certified": "USDA Organic", "Caffeine": "Low", "Origin": "India" }
+},
+{
+  name: "Logitech G Pro X Superlight Gaming Mouse",
+  description: "Ultra-lightweight esports mouse built for fast flicks, precise tracking, and long competitive sessions. Designed for serious PC gamers who want low-latency response and premium sensor accuracy.",
+  price: 11995, stock: 31, category: "Mouse", brand: "Logitech",
+  rating: 4.7, reviewCount: 4210,
+  images: ["https://images.unsplash.com/photo-1527814050087-3793815479db?w=600"],
+  specs: { "Weight": "63g", "Sensor": "HERO 25K", "Connectivity": "Wireless", "Usage": "Gaming" }
+},
+{
+  name: "Entry Mousepad Basic Cloth Pad",
+  description: "Budget cloth mousepad for everyday browsing. Works fine for casual use but offers limited glide consistency and stopping control for high-performance gaming mice.",
+  price: 299, stock: 122, category: "Mousepad", brand: "ShopX Basics",
+  rating: 3.9, reviewCount: 688,
+  images: ["https://images.unsplash.com/photo-1616788494707-ec28f08d05a1?w=600"],
+  specs: { "Material": "Cloth", "Thickness": "2mm", "Usage": "Casual" }
+},
+{
+  name: "SteelSeries QcK Performance Mousepad",
+  description: "Premium micro-woven mousepad optimized for precision tracking and low-friction glide. Built for gaming setups that need consistent sensor performance.",
+  price: 2499, stock: 46, category: "Mousepad", brand: "SteelSeries",
+  rating: 4.6, reviewCount: 1376,
+  images: ["https://images.unsplash.com/photo-1587202372775-e229f172b9d7?w=600"],
+  specs: { "Material": "Micro-woven cloth", "Thickness": "4mm", "Usage": "Gaming" }
+},
+{
+  name: "Head & Shoulders Smooth Silky Shampoo 650ml",
+  description: "Daily-use anti-dandruff shampoo that is commonly repurchased every few weeks. A good fit for demonstrating usage-based reordering behavior.",
+  price: 489, stock: 96, category: "Grocery", brand: "Head & Shoulders",
+  rating: 4.4, reviewCount: 3921,
+  images: ["https://images.unsplash.com/photo-1700709678003-01941f72fb92?q=80&w=735&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D"],
+  specs: { "Volume": "650ml", "Type": "Shampoo", "Hair Type": "All" }
 }
 ];
 
@@ -383,17 +415,136 @@ async function main() {
   console.log('🌱 Starting database seed...');
   
   // Clear existing data
-  await prisma.orderItem.deleteMany();
-  await prisma.order.deleteMany();
+  await prisma.challengeAttempt.deleteMany();
+  await prisma.challenge.deleteMany();
+  await prisma.purchaseHistory.deleteMany();
+  await prisma.priceHistory.deleteMany();
+  await prisma.productCompatibilityRule.deleteMany();
+  await prisma.review.deleteMany();
   await prisma.cartItem.deleteMany();
   await prisma.cart.deleteMany();
+  await prisma.coupon.deleteMany();
+  await prisma.orderItem.deleteMany();
+  await prisma.order.deleteMany();
   await prisma.product.deleteMany();
   
+  const createdProducts = {};
+
   // Seed products
   for (const product of products) {
-    await prisma.product.create({ data: product });
+    const created = await prisma.product.create({ data: product });
+    createdProducts[created.name] = created;
     console.log(`✅ Created product: ${product.name}`);
   }
+
+  const now = new Date();
+
+  const logitechMouse = createdProducts["Logitech G Pro X Superlight Gaming Mouse"];
+  const basicMousepad = createdProducts["Entry Mousepad Basic Cloth Pad"];
+  const premiumMousepad = createdProducts["SteelSeries QcK Performance Mousepad"];
+  const shampoo = createdProducts["Head & Shoulders Smooth Silky Shampoo 650ml"];
+  const iphone = createdProducts["Apple iPhone 15 Pro Max 256GB"];
+  const sonyHeadphones = createdProducts["Sony WH-1000XM5 Wireless Headphones"];
+
+  await prisma.productCompatibilityRule.createMany({
+    data: [
+      {
+        category: "mouse",
+        requires: ["mousepad"],
+        minCompatiblePriceRatio: 0.3,
+        warningMessage: "Your mouse performance may be limited by your mousepad.",
+        severity: "medium",
+      },
+      {
+        category: "headphones",
+        requires: [],
+        minCompatiblePriceRatio: null,
+        warningMessage: "Premium headphones deserve a source that can fully drive their detail and codec support.",
+        severity: "low",
+      },
+    ],
+  });
+
+  const priceHistoryEntries = [
+    [iphone.id, 129900, 18],
+    [iphone.id, 142900, 7],
+    [iphone.id, 139900, 3],
+    [iphone.id, 134900, 0],
+    [sonyHeadphones.id, 27990, 21],
+    [sonyHeadphones.id, 31990, 8],
+    [sonyHeadphones.id, 29990, 0],
+    [logitechMouse.id, 10499, 15],
+    [logitechMouse.id, 12499, 5],
+    [logitechMouse.id, 11995, 0],
+    [basicMousepad.id, 249, 12],
+    [basicMousepad.id, 349, 4],
+    [basicMousepad.id, 299, 0],
+    [shampoo.id, 449, 30],
+    [shampoo.id, 459, 18],
+    [shampoo.id, 489, 0],
+  ];
+
+  await prisma.priceHistory.createMany({
+    data: priceHistoryEntries.map(([productId, price, daysAgo]) => ({
+      productId,
+      price,
+      timestamp: new Date(now.getTime() - (daysAgo * 24 * 60 * 60 * 1000)),
+    })),
+  });
+
+  await prisma.purchaseHistory.createMany({
+    data: [
+      {
+        userId: 'demo-user',
+        productId: shampoo.id,
+        quantity: 1,
+        timestamp: new Date(now.getTime() - (42 * 24 * 60 * 60 * 1000)),
+      },
+      {
+        userId: 'demo-user',
+        productId: shampoo.id,
+        quantity: 1,
+        timestamp: new Date(now.getTime() - (21 * 24 * 60 * 60 * 1000)),
+      },
+      {
+        userId: 'demo-user',
+        productId: shampoo.id,
+        quantity: 1,
+        timestamp: new Date(now.getTime() - (3 * 24 * 60 * 60 * 1000)),
+      },
+      {
+        userId: 'demo-user',
+        productId: createdProducts["Tata Coffee Grand Premium Instant Coffee 200g"].id,
+        quantity: 1,
+        timestamp: new Date(now.getTime() - (40 * 24 * 60 * 60 * 1000)),
+      },
+      {
+        userId: 'demo-user',
+        productId: createdProducts["Tata Coffee Grand Premium Instant Coffee 200g"].id,
+        quantity: 1,
+        timestamp: new Date(now.getTime() - (17 * 24 * 60 * 60 * 1000)),
+      },
+    ],
+  });
+
+  await prisma.challenge.createMany({
+    data: [
+      {
+        productId: logitechMouse.id,
+        type: 'QUIZ',
+        prompt: 'Quick quiz: what surface accessory helps a gaming mouse track consistently?',
+        answer: 'mousepad',
+        discountPercent: 12,
+      },
+      {
+        productId: premiumMousepad.id,
+        type: 'PUZZLE',
+        prompt: 'Fill the missing word: smooth glide + precise control = better ___ tracking.',
+        answer: 'sensor',
+        discountPercent: 10,
+      },
+    ],
+  });
   
   console.log(`\n🎉 Seeded ${products.length} products successfully!`);
 }

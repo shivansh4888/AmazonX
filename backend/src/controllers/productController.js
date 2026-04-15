@@ -1,8 +1,8 @@
 // Products Controller
 // Handles all product-related business logic
 
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+const prisma = require('../lib/prisma');
+const { getPriceInsight } = require('../services/pricingService');
 
 /**
  * GET /api/products
@@ -121,4 +121,30 @@ const getProductById = async (req, res) => {
   }
 };
 
-module.exports = { getProducts, getProductById };
+const getProductPriceInsight = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const product = await prisma.product.findUnique({
+      where: { id },
+      select: { id: true, name: true, price: true },
+    });
+
+    if (!product) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+
+    const insight = await getPriceInsight(id);
+
+    res.json({
+      productId: product.id,
+      currentPrice: product.price,
+      ...insight,
+    });
+  } catch (error) {
+    console.error('getProductPriceInsight error:', error);
+    res.status(500).json({ error: 'Failed to fetch price insight' });
+  }
+};
+
+module.exports = { getProducts, getProductById, getProductPriceInsight };

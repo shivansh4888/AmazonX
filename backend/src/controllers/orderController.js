@@ -2,9 +2,10 @@
 // Core business logic: order creation, payment simulation, stock management, email
 // ⚠️ ALL PAYMENTS ARE SIMULATED - NO REAL TRANSACTIONS OCCUR
 
-const { PrismaClient } = require('@prisma/client');
 const { sendOrderConfirmationEmail } = require('../services/emailService');
-const prisma = new PrismaClient();
+const prisma = require('../lib/prisma');
+const { getUserId } = require('../utils/requestContext');
+const { computeCartTotals, couponIsActive } = require('../services/cartPricingService');
 
 /**
  * Calculate estimated delivery date
@@ -96,6 +97,7 @@ const simulatePayment = async (paymentMethod, paymentData) => {
 const createOrder = async (req, res) => {
   const { body } = req;
   const sessionId = req.headers['x-session-id'];
+  const userId = getUserId(req);
 
   try {
     // ─── Step 1: Validate Request ──────────────────────────────────────────────
@@ -162,13 +164,50 @@ const createOrder = async (req, res) => {
     // ─── Step 4 & 5: Create Order + Deduct Stock (Atomic Transaction) ─────────
     // Using Prisma transaction ensures either ALL operations succeed or NONE do
     // This prevents scenarios like "order created but stock not deducted"
-    const subtotal = items.reduce((sum, item) => {
-      return sum + (productMap[item.productId].price * item.quantity);
-    }, 0);
+    let cartForPricing = null;
+    let pricing = null;
 
-    const tax = parseFloat((subtotal * 0.18).toFixed(2)); // 18% GST
-    const shippingCost = subtotal >= 500 ? 0 : 49; // Free shipping above ₹500
-    const total = parseFloat((subtotal + tax + shippingCost).toFixed(2));
+    if (sessionId) {
+      cartForPricing = await prisma.cart.findUnique({
+        where: { sessionId },
+        include: {
+          appliedCoupon: true,
+          items: {
+            include: {
+              product: {
+                select: { id: true, price: true, name: true, stock: true, category: true, images: true, brand: true },
+              },
+            },
+          },
+        },
+      });
+    }
+
+    if (cartForPricing?.appliedCoupon && (!couponIsActive(cartForPricing.appliedCoupon) || cartForPricing.appliedCoupon.userId !== userId)) {
+      cartForPricing = {
+        ...cartForPricing,
+        appliedCoupon: null,
+      };
+    }
+
+    pricing = cartForPricing ? computeCartTotals(cartForPricing) : {
+      subtotal: items.reduce((sum, item) => sum + (productMap[item.productId].price * item.quantity), 0),
+      discount: 0,
+      tax: 0,
+      shipping: 0,
+      total: 0,
+      appliedCoupon: null,
+    };
+
+    if (!cartForPricing) {
+      pricing.tax = parseFloat((pricing.subtotal * 0.18).toFixed(2));
+      pricing.shipping = pricing.subtotal >= 500 ? 0 : 49;
+      pricing.total = parseFloat((pricing.subtotal + pricing.tax + pricing.shipping).toFixed(2));
+    }
+
+    const { subtotal, discount, tax } = pricing;
+    const shippingCost = pricing.shipping;
+    const total = pricing.total;
     const estimatedDelivery = calculateDeliveryDate(paymentMethod);
 
     const order = await prisma.$transaction(async (tx) => {
@@ -178,9 +217,11 @@ const createOrder = async (req, res) => {
           paymentMethod,
           paymentStatus: paymentMethod === 'COD' ? 'PENDING' : 'PAID',
           subtotal,
+          discount,
           tax,
           shippingCost,
           total,
+          couponCode: pricing.appliedCoupon?.code || null,
           shippingAddress,
           customerEmail,
           customerName: customerName || shippingAddress.name,
@@ -213,6 +254,21 @@ const createOrder = async (req, res) => {
           }
         });
         console.log(`📦 Stock deducted: ${productMap[item.productId].name} -${item.quantity} units`);
+
+        await tx.purchaseHistory.create({
+          data: {
+            userId,
+            productId: item.productId,
+            quantity: item.quantity,
+          },
+        });
+      }
+
+      if (pricing.appliedCoupon?.code) {
+        await tx.coupon.update({
+          where: { code: pricing.appliedCoupon.code },
+          data: { redeemedAt: new Date() },
+        });
       }
 
       return newOrder;
@@ -223,6 +279,10 @@ const createOrder = async (req, res) => {
       const cart = await prisma.cart.findUnique({ where: { sessionId } });
       if (cart) {
         await prisma.cartItem.deleteMany({ where: { cartId: cart.id } });
+        await prisma.cart.update({
+          where: { id: cart.id },
+          data: { appliedCouponCode: null },
+        });
         console.log(`🛒 Cart cleared for session ${sessionId}`);
       }
     }
