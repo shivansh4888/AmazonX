@@ -1,0 +1,125 @@
+// Prisma Schema for E-Commerce Application
+// Defines all database models and relationships
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Product {
+  id          String      @id @default(uuid())
+  name        String
+  description String
+  price       Float
+  stock       Int         @default(0)
+  category    String
+  images      String[]    // Array of image URLs
+  specs       Json?       // Key-value specs object
+  rating      Float       @default(4.0)
+  reviewCount Int         @default(0)
+  brand       String?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  cartItems   CartItem[]
+  orderItems  OrderItem[]
+  reviews     Review[]
+  @@index([category])
+  @@index([name])
+}
+
+model Cart {
+  id        String     @id @default(uuid())
+  sessionId String     @unique // Browser session ID (no auth required)
+  items     CartItem[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+}
+
+model CartItem {
+  id        String   @id @default(uuid())
+  cart      Cart     @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  cartId    String
+  product   Product  @relation(fields: [productId], references: [id])
+  productId String
+  quantity  Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([cartId, productId])
+}
+
+model Order {
+  id              String      @id @default(uuid())
+  status          OrderStatus @default(CONFIRMED)
+  paymentMethod   PaymentMethod
+  paymentStatus   PaymentStatus @default(PAID)
+  subtotal        Float
+  tax             Float
+  shippingCost    Float       @default(0)
+  total           Float
+  // Shipping address stored as JSON
+  shippingAddress Json
+  // Customer email for notifications
+  customerEmail   String
+  customerName    String
+  estimatedDelivery DateTime
+  items           OrderItem[]
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@index([customerEmail])
+  @@index([status])
+}
+
+model OrderItem {
+  id        String  @id @default(uuid())
+  order     Order   @relation(fields: [orderId], references: [id])
+  orderId   String
+  product   Product @relation(fields: [productId], references: [id])
+  productId String
+  quantity  Int
+  price     Float   // Price at time of purchase (snapshot)
+  name      String  // Product name snapshot
+
+  @@index([orderId])
+}
+
+model Review {
+  id        String   @id @default(uuid())
+  product   Product  @relation(fields: [productId], references: [id])
+  productId String
+  email     String   // purchaser's email
+  name      String
+  rating    Int      // 1–5
+  title     String
+  body      String
+  createdAt DateTime @default(now())
+
+  @@unique([productId, email])
+  @@index([productId])
+}
+
+enum OrderStatus {
+  CONFIRMED
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  CARD
+  UPI
+  COD
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
