@@ -3,10 +3,14 @@
 
 import axios from 'axios';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+const LOCAL_API_BASE = 'http://localhost:5000/api';
+const PRIMARY_API_BASE = process.env.NEXT_PUBLIC_API_URL || LOCAL_API_BASE;
+const FALLBACK_API_BASE =
+  process.env.NEXT_PUBLIC_API_FALLBACK_URL ||
+  (PRIMARY_API_BASE === LOCAL_API_BASE ? 'https://amazonx-dep.onrender.com/api' : '');
 
 export const api = axios.create({
-  baseURL: API_BASE,
+  baseURL: PRIMARY_API_BASE,
   timeout: 15000,
 });
 
@@ -24,6 +28,32 @@ api.interceptors.request.use((config) => {
   }
   return config;
 });
+
+api.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const originalRequest = error.config || {};
+    const isLocalPrimary = PRIMARY_API_BASE === LOCAL_API_BASE;
+    const shouldRetryWithFallback =
+      Boolean(FALLBACK_API_BASE) &&
+      isLocalPrimary &&
+      !originalRequest._retriedWithFallback &&
+      (
+        error.code === 'ERR_NETWORK' ||
+        error.code === 'ECONNABORTED' ||
+        !error.response ||
+        error.response.status >= 500
+      );
+
+    if (shouldRetryWithFallback) {
+      originalRequest._retriedWithFallback = true;
+      originalRequest.baseURL = FALLBACK_API_BASE;
+      return api.request(originalRequest);
+    }
+
+    return Promise.reject(error);
+  }
+);
 
 // ─── Session Management ────────────────────────────────────────────────────────
 // We use a random UUID stored in localStorage as a "session ID"

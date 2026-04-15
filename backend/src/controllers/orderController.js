@@ -288,9 +288,8 @@ const createOrder = async (req, res) => {
     }
 
     // ─── Step 7: Send Confirmation Email ──────────────────────────────────────
-    // Fire-and-forget: don't await this to avoid blocking the response
-    // Email failure is logged but doesn't affect order success
-    const emailResult = await sendOrderConfirmationEmail({
+    // Fire-and-forget so checkout is not blocked by SMTP/network latency.
+    const emailPayload = {
       ...order,
       customerEmail,
       customerName,
@@ -300,6 +299,10 @@ const createOrder = async (req, res) => {
         quantity: item.quantity,
         price: item.price
       }))
+    };
+
+    sendOrderConfirmationEmail(emailPayload).catch((emailError) => {
+      console.error('sendOrderConfirmationEmail background error:', emailError);
     });
 
     // ─── Step 8: Return Confirmation ──────────────────────────────────────────
@@ -322,8 +325,8 @@ const createOrder = async (req, res) => {
         createdAt: order.createdAt
       },
       transactionId: paymentResult.transactionId,
-      emailSent: emailResult.success,
-      emailPreview: emailResult.previewUrl || null // Ethereal preview URL for testing
+      emailSent: null,
+      emailPreview: null
     });
 
   } catch (error) {
